@@ -1,37 +1,87 @@
-import { useState } from 'react';
-import { Student, Event, StudentEvent, Submission } from '@/app/types';
-import { Trophy, Calendar, History, LogOut, Award, CheckCircle } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Student, Event, StudentEvent, AuthUser } from '@/app/types';
+import { api } from '@/app/api';
+import { Trophy, Calendar, History, LogOut, Award, CheckCircle, Loader2 } from 'lucide-react';
 
 interface StudentDashboardProps {
-  currentStudent: Student;
-  allStudents: Student[];
-  events: Event[];
-  studentEvents: StudentEvent[];
+  currentUser: AuthUser;
   onLogout: () => void;
-  onParticipate: (eventId: string) => void;
-  onSubmitProof: (eventId: string, claimType: 'participated' | 'won', file: File) => void;
 }
 
-export function StudentDashboard({
-  currentStudent,
-  allStudents,
-  events,
-  studentEvents,
-  onLogout,
-  onParticipate,
-  onSubmitProof,
-}: StudentDashboardProps) {
+// Map DB snake_case to frontend camelCase
+function mapStudent(raw: any): Student {
+  return {
+    id: raw.id,
+    name: raw.name,
+    email: raw.email,
+    year: raw.year,
+    totalPoints: raw.total_points ?? raw.totalPoints ?? 0,
+  };
+}
+
+function mapEvent(raw: any): Event {
+  return {
+    id: raw.id,
+    name: raw.name,
+    description: raw.description,
+    participationPoints: raw.participation_points ?? raw.participationPoints ?? 0,
+    winningPoints: raw.winning_points ?? raw.winningPoints ?? 0,
+    category: raw.category,
+  };
+}
+
+function mapStudentEvent(raw: any): StudentEvent {
+  return {
+    studentId: raw.student_id ?? raw.studentId,
+    eventId: raw.event_id ?? raw.eventId,
+    status: raw.status,
+    pointsCollected: raw.points_collected === 1 || raw.points_collected === true || raw.pointsCollected === true,
+  };
+}
+
+export function StudentDashboard({ currentUser, onLogout }: StudentDashboardProps) {
   const [activeTab, setActiveTab] = useState<'leaderboard' | 'announcements' | 'history'>('leaderboard');
   const [participateModal, setParticipateModal] = useState<string | null>(null);
   const [proofModal, setProofModal] = useState<{ eventId: string; claimType: 'participated' | 'won' } | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  
+  const [students, setStudents] = useState<Student[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [studentEvents, setStudentEvents] = useState<StudentEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  const currentStudent = mapStudent(currentUser);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [studentsData, eventsData, seData] = await Promise.all([
+        api.getStudents(),
+        api.getEvents(),
+        api.getStudentEvents(currentUser.id),
+      ]);
+      setStudents(studentsData.map(mapStudent));
+      setEvents(eventsData.map(mapEvent));
+      setStudentEvents(seData.map(mapStudentEvent));
+    } catch (err) {
+      console.error('Failed to fetch data:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser.id]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   // Sort students by points for leaderboard
-  const sortedStudents = [...allStudents].sort((a, b) => b.totalPoints - a.totalPoints);
-  const currentRank = sortedStudents.findIndex(s => s.id === currentStudent.id) + 1;
+  const sortedStudents = [...students].sort((a, b) => b.totalPoints - a.totalPoints);
+  const currentStudentFromList = students.find(s => s.id === currentUser.id);
+  const displayStudent = currentStudentFromList || currentStudent;
+  const currentRank = sortedStudents.findIndex(s => s.id === currentUser.id) + 1;
 
   // Get student's participated events
-  const myEvents = studentEvents.filter(se => se.studentId === currentStudent.id);
+  const myEvents = studentEvents.filter(se => se.studentId === currentUser.id);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -39,13 +89,43 @@ export function StudentDashboard({
     }
   };
 
-  const handleSubmitProof = () => {
-    if (proofModal && selectedFile) {
-      onSubmitProof(proofModal.eventId, proofModal.claimType, selectedFile);
-      setProofModal(null);
-      setSelectedFile(null);
+  const handleParticipate = async (eventId: string) => {
+    try {
+      await api.participate(eventId);
+      await fetchData();
+      setParticipateModal(null);
+    } catch (err: any) {
+      alert(err.message || 'Failed to participate');
     }
   };
+
+  const handleSubmitProof = async () => {
+    if (proofModal && selectedFile) {
+      setSubmitting(true);
+      try {
+        await api.submitProof(proofModal.eventId, proofModal.claimType, selectedFile);
+        setProofModal(null);
+        setSelectedFile(null);
+        await fetchData();
+        alert('Proof submitted successfully! Waiting for admin approval.');
+      } catch (err: any) {
+        alert(err.message || 'Failed to submit proof');
+      } finally {
+        setSubmitting(false);
+      }
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-3" />
+          <p className="text-gray-500">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -54,19 +134,19 @@ export function StudentDashboard({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white">
-                <span className="text-lg">{currentStudent.name.charAt(0)}</span>
+              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md">
+                <span className="text-lg font-semibold">{displayStudent.name.charAt(0)}</span>
               </div>
               <div>
-                <h2 className="text-xl text-gray-900">{currentStudent.name}</h2>
-                <p className="text-sm text-gray-500">{currentStudent.year} • Rank #{currentRank}</p>
+                <h2 className="text-xl text-gray-900 font-bold">{displayStudent.name}</h2>
+                <p className="text-sm text-gray-500">{displayStudent.year} • Rank #{currentRank || '—'}</p>
               </div>
             </div>
             <div className="flex items-center space-x-4">
               <div className="text-right">
                 <div className="flex items-center space-x-2">
                   <Award className="w-5 h-5 text-blue-600" />
-                  <span className="text-2xl text-blue-600">{currentStudent.totalPoints}</span>
+                  <span className="text-2xl text-blue-600 font-bold">{displayStudent.totalPoints}</span>
                 </div>
                 <p className="text-xs text-gray-500">Total Points</p>
               </div>
@@ -147,7 +227,7 @@ export function StudentDashboard({
                   {sortedStudents.map((student, index) => (
                     <tr
                       key={student.id}
-                      className={student.id === currentStudent.id ? 'bg-blue-50' : 'hover:bg-gray-50'}
+                      className={student.id === currentUser.id ? 'bg-blue-50' : 'hover:bg-gray-50'}
                     >
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
@@ -171,7 +251,12 @@ export function StudentDashboard({
                           <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white">
                             {student.name.charAt(0)}
                           </div>
-                          <span className="text-gray-900">{student.name}</span>
+                          <div>
+                            <span className="text-gray-900 font-medium">{student.name}</span>
+                            {student.id === currentUser.id && (
+                              <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">You</span>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-gray-600">
@@ -199,10 +284,12 @@ export function StudentDashboard({
                 cultural: 'bg-pink-100 text-pink-700',
               };
 
+              const alreadyParticipated = myEvents.some(se => se.eventId === event.id);
+
               return (
                 <div key={event.id} className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition">
                   <div className="flex items-start justify-between mb-3">
-                    <h3 className="text-lg text-gray-900">{event.name}</h3>
+                    <h3 className="text-lg text-gray-900 font-semibold">{event.name}</h3>
                     <span className={`px-3 py-1 rounded-full text-xs ${categoryColors[event.category]}`}>
                       {event.category.charAt(0).toUpperCase() + event.category.slice(1)}
                     </span>
@@ -220,12 +307,19 @@ export function StudentDashboard({
                       </div>
                     </div>
                   </div>
-                  <button
-                    onClick={() => setParticipateModal(event.id)}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg transition"
-                  >
-                    Participate
-                  </button>
+                  {alreadyParticipated ? (
+                    <div className="w-full text-center py-2.5 bg-green-50 text-green-700 rounded-lg text-sm font-medium flex items-center justify-center space-x-2">
+                      <CheckCircle className="w-4 h-4" />
+                      <span>Already Participated</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setParticipateModal(event.id)}
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg transition"
+                    >
+                      Participate
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -252,7 +346,7 @@ export function StudentDashboard({
                   <div key={`${se.studentId}-${se.eventId}`} className="bg-white rounded-xl shadow-sm p-6">
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
-                        <h3 className="text-lg text-gray-900 mb-1">{event.name}</h3>
+                        <h3 className="text-lg text-gray-900 mb-1 font-semibold">{event.name}</h3>
                         <div className="flex items-center space-x-4 text-sm">
                           <span className={`px-2 py-1 rounded ${
                             se.status === 'won' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
@@ -290,16 +384,13 @@ export function StudentDashboard({
       {participateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h3 className="text-xl text-gray-900 mb-4">Event Registration</h3>
+            <h3 className="text-xl text-gray-900 mb-4 font-bold">Event Registration</h3>
             <p className="text-gray-600 mb-6">
               Confirm your participation in this event. You'll be able to submit proof and collect points after the event.
             </p>
             <div className="flex space-x-3">
               <button
-                onClick={() => {
-                  onParticipate(participateModal);
-                  setParticipateModal(null);
-                }}
+                onClick={() => handleParticipate(participateModal)}
                 className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg transition"
               >
                 Confirm
@@ -319,12 +410,12 @@ export function StudentDashboard({
       {proofModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h3 className="text-xl text-gray-900 mb-4">Submit Proof</h3>
+            <h3 className="text-xl text-gray-900 mb-4 font-bold">Submit Proof</h3>
             <p className="text-gray-600 mb-4">
               Upload a certificate, screenshot, or document as proof of your {proofModal.claimType === 'won' ? 'win' : 'participation'}.
             </p>
             <div className="mb-6">
-              <label className="block text-sm text-gray-700 mb-2">Upload File</label>
+              <label className="block text-sm text-gray-700 mb-2 font-medium">Upload File</label>
               <input
                 type="file"
                 onChange={handleFileSelect}
@@ -338,10 +429,10 @@ export function StudentDashboard({
             <div className="flex space-x-3">
               <button
                 onClick={handleSubmitProof}
-                disabled={!selectedFile}
+                disabled={!selectedFile || submitting}
                 className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Submit
+                {submitting ? 'Submitting...' : 'Submit'}
               </button>
               <button
                 onClick={() => {

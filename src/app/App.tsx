@@ -1,129 +1,58 @@
-import { useState } from 'react';
-import { LoginScreen } from './components/LoginScreen.tsx';
+import { useState, useEffect, useCallback } from 'react';
+import { LoginScreen } from './components/LoginScreen';
 import { StudentDashboard } from './components/StudentDashboard';
 import { AdminDashboard } from './components/AdminDashboard';
-import { UserRole, Student, Event, StudentEvent, Submission } from './types';
-import { initialStudents, initialEvents, initialStudentEvents, initialSubmissions } from './data/mockData';
+import { AuthUser } from './types';
+import { api } from './api';
 
 function App() {
-  const [currentUser, setCurrentUser] = useState<{ role: UserRole; id: string }>({
-    role: null,
-    id: '',
-  });
-  
-  const [students, setStudents] = useState<Student[]>(initialStudents);
-  const [events, setEvents] = useState<Event[]>(initialEvents);
-  const [studentEvents, setStudentEvents] = useState<StudentEvent[]>(initialStudentEvents);
-  const [submissions, setSubmissions] = useState<Submission[]>(initialSubmissions);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const handleLogin = (role: UserRole, userId: string) => {
-    setCurrentUser({ role, id: userId });
-  };
-
-  const handleLogout = () => {
-    setCurrentUser({ role: null, id: '' });
-  };
-
-  const handleParticipate = (eventId: string) => {
-    if (!currentUser.id) return;
-
-    // Add a new student event participation
-    const newParticipation: StudentEvent = {
-      studentId: currentUser.id,
-      eventId,
-      status: 'participated',
-      pointsCollected: false,
+  // Check for existing token on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const user = await api.getMe();
+        setCurrentUser(user);
+      } catch {
+        api.clearToken();
+      } finally {
+        setLoading(false);
+      }
     };
+    checkAuth();
+  }, []);
 
-    setStudentEvents([...studentEvents, newParticipation]);
-  };
+  const handleLogin = useCallback((user: AuthUser) => {
+    setCurrentUser(user);
+  }, []);
 
-  const handleSubmitProof = (eventId: string, claimType: 'participated' | 'won', file: File) => {
-    if (!currentUser.id) return;
+  const handleLogout = useCallback(() => {
+    api.clearToken();
+    setCurrentUser(null);
+  }, []);
 
-    const student = students.find(s => s.id === currentUser.id);
-    const event = events.find(e => e.id === eventId);
-    
-    if (!student || !event) return;
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
-    const newSubmission: Submission = {
-      id: `sub-${Date.now()}`,
-      studentId: student.id,
-      studentName: student.name,
-      eventId: event.id,
-      eventName: event.name,
-      claimType,
-      proofFile: file.name,
-      status: 'pending',
-      submittedAt: new Date(),
-    };
-
-    setSubmissions([...submissions, newSubmission]);
-  };
-
-  const handleCreateAnnouncement = (eventData: Omit<Event, 'id'>) => {
-    const newEvent: Event = {
-      ...eventData,
-      id: `e${events.length + 1}`,
-    };
-
-    setEvents([...events, newEvent]);
-  };
-
-  const handleApproveSubmission = (submissionId: string) => {
-    const submission = submissions.find(s => s.id === submissionId);
-    if (!submission) return;
-
-    const event = events.find(e => e.id === submission.eventId);
-    if (!event) return;
-
-    // Update submission status
-    setSubmissions(submissions.map(s =>
-      s.id === submissionId ? { ...s, status: 'approved' as const } : s
-    ));
-
-    // Update student points
-    const pointsToAdd = submission.claimType === 'won'
-      ? event.winningPoints
-      : event.participationPoints;
-
-    setStudents(students.map(s =>
-      s.id === submission.studentId
-        ? { ...s, totalPoints: s.totalPoints + pointsToAdd }
-        : s
-    ));
-
-    // Mark as collected in student events
-    setStudentEvents(studentEvents.map(se =>
-      se.studentId === submission.studentId && se.eventId === submission.eventId
-        ? { ...se, pointsCollected: true, status: submission.claimType === 'won' ? 'won' : 'participated' }
-        : se
-    ));
-  };
-
-  const handleRejectSubmission = (submissionId: string) => {
-    setSubmissions(submissions.map(s =>
-      s.id === submissionId ? { ...s, status: 'rejected' as const } : s
-    ));
-  };
-
-  // Get current student data
-  const currentStudent = students.find(s => s.id === currentUser.id);
-
-  if (!currentUser.role) {
+  if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
-  if (currentUser.role === 'student' && currentStudent) {
+  if (currentUser.role === 'student') {
     return (
       <StudentDashboard
-        currentStudent={currentStudent}
-        allStudents={students}
-        events={events}
-        studentEvents={studentEvents}
+        currentUser={currentUser}
         onLogout={handleLogout}
-        onParticipate={handleParticipate}
-        onSubmitProof={handleSubmitProof}
       />
     );
   }
@@ -131,13 +60,7 @@ function App() {
   if (currentUser.role === 'admin') {
     return (
       <AdminDashboard
-        allStudents={students}
-        events={events}
-        submissions={submissions}
         onLogout={handleLogout}
-        onCreateAnnouncement={handleCreateAnnouncement}
-        onApproveSubmission={handleApproveSubmission}
-        onRejectSubmission={handleRejectSubmission}
       />
     );
   }

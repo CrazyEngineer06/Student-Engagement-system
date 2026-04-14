@@ -1,32 +1,55 @@
 import { useState } from 'react';
-import { UserRole } from '@/app/types';
-import { Lock, Mail } from 'lucide-react';
+import { AuthUser } from '@/app/types';
+import { api } from '@/app/api';
+import { Lock, Mail, User, GraduationCap, AlertCircle } from 'lucide-react';
 
 interface LoginScreenProps {
-  onLogin: (role: UserRole, userId: string) => void;
+  onLogin: (user: AuthUser) => void;
 }
 
 export function LoginScreen({ onLogin }: LoginScreenProps) {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [role, setRole] = useState<'student' | 'admin'>('student');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [year, setYear] = useState('2nd Year');
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simple mock authentication - in production, this would validate against a backend
-    if (role === 'student') {
-      onLogin('student', 's1'); // Login as first student
-    } else {
-      onLogin('admin', 'admin1');
+    setError('');
+    setIsLoading(true);
+
+    try {
+      if (mode === 'register') {
+        if (!name.trim()) {
+          setError('Name is required');
+          setIsLoading(false);
+          return;
+        }
+        const data = await api.register(name, email, password, year);
+        api.setToken(data.token);
+        onLogin(data.user);
+      } else {
+        const data = await api.login(email, password);
+        api.setToken(data.token);
+        onLogin(data.user);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Authentication failed');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-white flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-white flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo/Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-600 mb-4">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 mb-4 shadow-lg shadow-blue-200">
             <svg
               className="w-8 h-8 text-white"
               fill="none"
@@ -41,42 +64,99 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
               />
             </svg>
           </div>
-          <h1 className="text-3xl text-gray-900 mb-2">Student Engagement</h1>
-          <p className="text-gray-600">Track your points and achievements</p>
+          <h1 className="text-3xl text-gray-900 mb-2 font-bold">Student Engagement</h1>
+          <p className="text-gray-500">Track your points and achievements</p>
         </div>
 
         {/* Login Card */}
-        <div className="bg-white rounded-2xl shadow-lg p-8">
+        <div className="bg-white rounded-2xl shadow-xl shadow-gray-200/50 p-8 border border-gray-100">
+          {/* Mode Toggle (Login / Register) */}
+          {role === 'student' && (
+            <div className="flex bg-gray-100 rounded-lg p-1 mb-6">
+              <button
+                type="button"
+                onClick={() => { setMode('login'); setError(''); }}
+                className={`flex-1 py-2.5 rounded-md transition-all text-sm font-medium ${
+                  mode === 'login'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMode('register'); setError(''); }}
+                className={`flex-1 py-2.5 rounded-md transition-all text-sm font-medium ${
+                  mode === 'register'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Register
+              </button>
+            </div>
+          )}
+
           {/* Role Toggle */}
           <div className="flex bg-gray-100 rounded-lg p-1 mb-6">
             <button
               type="button"
-              onClick={() => setRole('student')}
-              className={`flex-1 py-2.5 rounded-md transition-all ${
+              onClick={() => { setRole('student'); setError(''); }}
+              className={`flex-1 py-2.5 rounded-md transition-all text-sm font-medium ${
                 role === 'student'
                   ? 'bg-white text-blue-600 shadow-sm'
-                  : 'text-gray-600 hover:text-gray-900'
+                  : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               Student
             </button>
             <button
               type="button"
-              onClick={() => setRole('admin')}
-              className={`flex-1 py-2.5 rounded-md transition-all ${
+              onClick={() => { setRole('admin'); setMode('login'); setError(''); }}
+              className={`flex-1 py-2.5 rounded-md transition-all text-sm font-medium ${
                 role === 'admin'
                   ? 'bg-white text-blue-600 shadow-sm'
-                  : 'text-gray-600 hover:text-gray-900'
+                  : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               Admin
             </button>
           </div>
 
-          {/* Login Form */}
-          <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Error Display */}
+          {error && (
+            <div className="flex items-center space-x-2 bg-red-50 text-red-600 px-4 py-3 rounded-lg mb-4 text-sm">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Name field (register only) */}
+            {mode === 'register' && role === 'student' && (
+              <div>
+                <label htmlFor="name" className="block text-sm text-gray-700 mb-1.5 font-medium">
+                  Full Name
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    id="name"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Piyush Kumar"
+                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-gray-50 focus:bg-white"
+                    required
+                  />
+                </div>
+              </div>
+            )}
+
             <div>
-              <label htmlFor="email" className="block text-sm text-gray-700 mb-2">
+              <label htmlFor="email" className="block text-sm text-gray-700 mb-1.5 font-medium">
                 Email Address
               </label>
               <div className="relative">
@@ -86,15 +166,15 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@college.edu"
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+                  placeholder={role === 'admin' ? 'admin@college.edu' : 'you@college.edu'}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-gray-50 focus:bg-white"
                   required
                 />
               </div>
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm text-gray-700 mb-2">
+              <label htmlFor="password" className="block text-sm text-gray-700 mb-1.5 font-medium">
                 Password
               </label>
               <div className="relative">
@@ -105,23 +185,61 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+                  className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-gray-50 focus:bg-white"
                   required
                 />
               </div>
             </div>
 
+            {/* Year field (register only) */}
+            {mode === 'register' && role === 'student' && (
+              <div>
+                <label htmlFor="year" className="block text-sm text-gray-700 mb-1.5 font-medium">
+                  Year
+                </label>
+                <div className="relative">
+                  <GraduationCap className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <select
+                    id="year"
+                    value={year}
+                    onChange={(e) => setYear(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-gray-50 focus:bg-white appearance-none"
+                  >
+                    <option value="1st Year">1st Year</option>
+                    <option value="2nd Year">2nd Year</option>
+                    <option value="3rd Year">3rd Year</option>
+                    <option value="4th Year">4th Year</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg transition-colors shadow-md hover:shadow-lg"
+              disabled={isLoading}
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-3 rounded-lg transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
-              Sign In
+              {isLoading ? (
+                <span className="flex items-center justify-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>{mode === 'register' ? 'Creating Account...' : 'Signing In...'}</span>
+                </span>
+              ) : (
+                mode === 'register' ? 'Create Account' : 'Sign In'
+              )}
             </button>
           </form>
 
-          {/* Footer */}
-          <div className="mt-6 text-center text-sm text-gray-500">
-            Demo: Use any email and password to login
+          {/* Footer hint */}
+          <div className="mt-6 text-center text-xs text-gray-400 space-y-1">
+            {role === 'admin' ? (
+              <p>Admin login: admin@college.edu / admin123</p>
+            ) : (
+              <>
+                <p>Existing students: (name)@college.edu / student123</p>
+                <p>e.g., piyush@college.edu / student123</p>
+              </>
+            )}
           </div>
         </div>
       </div>

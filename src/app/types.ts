@@ -31,8 +31,23 @@ export interface Submission {
   eventName: string;
   claimType: 'participated' | 'won';
   proofFile: string;
+  proofFileOriginal: string;
   status: 'pending' | 'approved' | 'rejected';
-  submittedAt: Date;
+  submittedAt: string;
 }
 
 export type UserRole = 'student' | 'admin' | null;
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'student' | 'admin';
+  year: string;
+  total_points: number;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
