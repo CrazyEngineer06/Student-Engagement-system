@@ -118,10 +118,11 @@ export const api = {
     return res.json();
   },
 
-  async approveSubmission(submissionId: string) {
+  async approveSubmission(submissionId: string, awardType: 'participated' | 'won') {
     const res = await fetch(`${API_BASE}/submissions/${submissionId}/approve`, {
       method: 'PATCH',
       headers: authHeaders(),
+      body: JSON.stringify({ awardType }),
     });
     if (!res.ok) throw new Error('Approval failed');
     return res.json();
@@ -133,6 +134,82 @@ export const api = {
       headers: authHeaders(),
     });
     if (!res.ok) throw new Error('Rejection failed');
+    return res.json();
+  },
+
+  // Value Added Courses
+  async getCourses(studentId?: string) {
+    const url = studentId
+      ? `${API_BASE}/courses?studentId=${studentId}`
+      : `${API_BASE}/courses`;
+    const res = await fetch(url, { headers: authHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch courses');
+    return res.json();
+  },
+
+  async addCourse(course: { courseName: string; provider: string; year: string; studentId?: string }) {
+    const res = await fetch(`${API_BASE}/courses`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(course),
+    });
+    if (!res.ok) throw new Error('Failed to add course');
+    return res.json();
+  },
+
+  async deleteCourse(courseId: string) {
+    const res = await fetch(`${API_BASE}/courses/${courseId}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to delete course');
+    return res.json();
+  },
+
+  // Refunds
+  async applyForRefund(courseName: string, provider: string, feeReceipt: File, certificate: File) {
+    const formData = new FormData();
+    formData.append('courseName', courseName);
+    formData.append('provider', provider);
+    formData.append('feeReceipt', feeReceipt);
+    formData.append('certificate', certificate);
+
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/refunds`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Refund application failed');
+    }
+    return res.json();
+  },
+
+  async getRefunds() {
+    const res = await fetch(`${API_BASE}/refunds`, { headers: authHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch refunds');
+    return res.json();
+  },
+
+  async approveRefund(refundId: string, adminRemark?: string) {
+    const res = await fetch(`${API_BASE}/refunds/${refundId}/approve`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ adminRemark }),
+    });
+    if (!res.ok) throw new Error('Failed to approve refund');
+    return res.json();
+  },
+
+  async rejectRefund(refundId: string, adminRemark?: string) {
+    const res = await fetch(`${API_BASE}/refunds/${refundId}/reject`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ adminRemark }),
+    });
+    if (!res.ok) throw new Error('Failed to reject refund');
     return res.json();
   },
 

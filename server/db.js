@@ -11,21 +11,6 @@ db.pragma('foreign_keys = ON');
 
 // Create tables
 db.exec(`
-  CREATE TABLE IF NOT EXISTS refund_applications (
-    id TEXT PRIMARY KEY,
-    student_id TEXT NOT NULL,
-    student_name TEXT NOT NULL,
-    course_name TEXT NOT NULL,
-    provider TEXT NOT NULL DEFAULT '',
-    fee_receipt TEXT NOT NULL,
-    fee_receipt_original TEXT NOT NULL DEFAULT '',
-    certificate TEXT NOT NULL,
-    certificate_original TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
-    admin_remark TEXT DEFAULT '',
-    applied_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (student_id) REFERENCES users(id)
-  );
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -52,7 +37,6 @@ db.exec(`
     event_id TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'participated' CHECK(status IN ('participated', 'won')),
     points_collected INTEGER DEFAULT 0,
-    academic_year TEXT DEFAULT 'Unknown',
     FOREIGN KEY (student_id) REFERENCES users(id),
     FOREIGN KEY (event_id) REFERENCES events(id),
     UNIQUE(student_id, event_id)
@@ -72,16 +56,6 @@ db.exec(`
     FOREIGN KEY (student_id) REFERENCES users(id),
     FOREIGN KEY (event_id) REFERENCES events(id)
   );
-
-  CREATE TABLE IF NOT EXISTS value_added_courses (
-    id TEXT PRIMARY KEY,
-    student_id TEXT NOT NULL,
-    course_name TEXT NOT NULL,
-    provider TEXT NOT NULL DEFAULT '',
-    year TEXT NOT NULL,
-    completed_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (student_id) REFERENCES users(id)
-  );
 `);
 
 // Seed data (only if tables are empty)
@@ -100,14 +74,14 @@ function seedDatabase() {
   `);
 
   const students = [
-    ['s1', 'Bhawesh Joshi', 'bhawesh@college.edu', defaultPassword, 'student', '2nd Year', 0],
-    ['s2', 'Rahul Sharma', 'rahul@college.edu', defaultPassword, 'student', '2nd Year', 0],
-    ['s3', 'Priya Rai', 'priya@college.edu', defaultPassword, 'student', '2nd Year', 0],
-    ['s4', 'Amit Patel', 'amit@college.edu', defaultPassword, 'student', '2nd Year', 0],
-    ['s5', 'Devkaran', 'devkaran@college.edu', defaultPassword, 'student', '2nd Year', 0],
-    ['s6', 'Piyush', 'piyush@college.edu', defaultPassword, 'student', '2nd Year', 0],
-    ['s7', 'Deepanshu', 'deepanshu@college.edu', defaultPassword, 'student', '2nd Year', 0],
-    ['s8', 'Raj Shristava', 'raj@college.edu', defaultPassword, 'student', '2nd Year', 0],
+    ['s1', 'Bhawesh Joshi', 'bhawesh@college.edu', defaultPassword, 'student', '2nd Year', 450],
+    ['s2', 'Rahul Sharma', 'rahul@college.edu', defaultPassword, 'student', '2nd Year', 380],
+    ['s3', 'Priya Rai', 'priya@college.edu', defaultPassword, 'student', '2nd Year', 520],
+    ['s4', 'Amit Patel', 'amit@college.edu', defaultPassword, 'student', '2nd Year', 290],
+    ['s5', 'Devkaran', 'devkaran@college.edu', defaultPassword, 'student', '2nd Year', 410],
+    ['s6', 'Piyush', 'piyush@college.edu', defaultPassword, 'student', '2nd Year', 340],
+    ['s7', 'Deepanshu', 'deepanshu@college.edu', defaultPassword, 'student', '2nd Year', 480],
+    ['s8', 'Raj Shristava', 'raj@college.edu', defaultPassword, 'student', '2nd Year', 360],
   ];
 
   const insertMany = db.transaction(() => {
@@ -147,16 +121,16 @@ function seedDatabase() {
 
   // Seed student events
   const insertSE = db.prepare(`
-    INSERT INTO student_events (student_id, event_id, status, points_collected, academic_year)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO student_events (student_id, event_id, status, points_collected)
+    VALUES (?, ?, ?, ?)
   `);
 
   const seData = [
-    ['s1', 'e1', 'participated', 1, '2nd Year'],
-    ['s1', 'e2', 'won', 1, '2nd Year'],
-    ['s1', 'e3', 'participated', 0, '2nd Year'],
-    ['s2', 'e4', 'participated', 1, '2nd Year'],
-    ['s3', 'e1', 'won', 1, '2nd Year'],
+    ['s1', 'e1', 'participated', 1],
+    ['s1', 'e2', 'won', 1],
+    ['s1', 'e3', 'participated', 0],
+    ['s2', 'e4', 'participated', 1],
+    ['s3', 'e1', 'won', 1],
   ];
 
   const insertSEs = db.transaction(() => {
@@ -167,57 +141,7 @@ function seedDatabase() {
 
   insertSEs();
 
-  // Run the recalculation of points to make the seed realistic based on actual events
-  db.prepare(`
-    UPDATE users
-    SET total_points = (
-      SELECT COALESCE(SUM(
-        CASE 
-          WHEN se.status = 'won' THEN e.winning_points
-          WHEN se.status = 'participated' THEN e.participation_points
-          ELSE 0
-        END
-      ), 0)
-      FROM student_events se
-      JOIN events e ON se.event_id = e.id
-      WHERE se.student_id = users.id AND se.points_collected = 1
-    )
-    WHERE role = 'student'
-  `).run();
-
-  // Seed value added courses
-  const insertCourse = db.prepare(`
-    INSERT INTO value_added_courses (id, student_id, course_name, provider, year)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-
-  const coursesData = [
-    ['vac1', 's1', 'Machine Learning Fundamentals', 'Coursera', '1st Year'],
-    ['vac2', 's1', 'Web Development Bootcamp', 'Udemy', '1st Year'],
-    ['vac3', 's1', 'Data Structures & Algorithms', 'GeeksforGeeks', '2nd Year'],
-    ['vac4', 's2', 'Cloud Computing Basics', 'AWS Academy', '1st Year'],
-    ['vac5', 's2', 'Python for Data Science', 'Coursera', '2nd Year'],
-    ['vac6', 's3', 'UI/UX Design Principles', 'Google', '1st Year'],
-    ['vac7', 's3', 'React.js Advanced Patterns', 'Udemy', '2nd Year'],
-    ['vac8', 's3', 'Digital Marketing', 'HubSpot Academy', '1st Year'],
-    ['vac9', 's6', 'Full Stack Development', 'Udemy', '1st Year'],
-    ['vac10', 's6', 'Cybersecurity Essentials', 'Cisco Networking Academy', '2nd Year'],
-    ['vac11', 's6', 'DevOps Fundamentals', 'LinkedIn Learning', '2nd Year'],
-    ['vac12', 's4', 'IoT and Embedded Systems', 'NPTEL', '2nd Year'],
-    ['vac13', 's5', 'Blockchain Basics', 'Coursera', '1st Year'],
-    ['vac14', 's7', 'Artificial Intelligence', 'edX', '2nd Year'],
-    ['vac15', 's8', 'Ethical Hacking', 'Udemy', '1st Year'],
-  ];
-
-  const insertCourses = db.transaction(() => {
-    for (const c of coursesData) {
-      insertCourse.run(...c);
-    }
-  });
-
-  insertCourses();
-
-  console.log('✅ Database seeded and points recalculated successfully!');
+  console.log('✅ Database seeded successfully!');
 }
 
 seedDatabase();

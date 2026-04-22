@@ -8,8 +8,8 @@ const fs = require('fs');
 const db = require('./db.cjs');
 
 const app = express();
-const PORT = 3001;
-const JWT_SECRET = 'student-engagement-secret-key-2026';
+const PORT = process.env.PORT || 3001;
+const JWT_SECRET = process.env.JWT_SECRET || 'student-engagement-secret-key-2026';
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -281,12 +281,14 @@ app.patch('/api/submissions/:id/approve', authenticate, adminOnly, (req, res) =>
     const event = db.prepare('SELECT * FROM events WHERE id = ?').get(submission.event_id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    const pointsToAdd = submission.claim_type === 'won' ? event.winning_points : event.participation_points;
+    // Admin can override the award type; falls back to student's claim
+    const awardType = req.body.awardType || submission.claim_type;
+    const pointsToAdd = awardType === 'won' ? event.winning_points : event.participation_points;
 
     // Use a transaction for atomicity
     const approve = db.transaction(() => {
-      // Update submission status
-      db.prepare('UPDATE submissions SET status = ? WHERE id = ?').run('approved', req.params.id);
+      // Update submission status and the final award type
+      db.prepare('UPDATE submissions SET status = ?, claim_type = ? WHERE id = ?').run('approved', awardType, req.params.id);
 
       // Update student points
       db.prepare('UPDATE users SET total_points = total_points + ? WHERE id = ?').run(pointsToAdd, submission.student_id);
@@ -296,16 +298,16 @@ app.patch('/api/submissions/:id/approve', authenticate, adminOnly, (req, res) =>
       const se = db.prepare('SELECT * FROM student_events WHERE student_id = ? AND event_id = ?').get(submission.student_id, submission.event_id);
       if (se) {
         db.prepare('UPDATE student_events SET points_collected = 1, status = ? WHERE student_id = ? AND event_id = ?')
-          .run(submission.claim_type === 'won' ? 'won' : 'participated', submission.student_id, submission.event_id);
+          .run(awardType === 'won' ? 'won' : 'participated', submission.student_id, submission.event_id);
       } else {
         db.prepare('INSERT INTO student_events (student_id, event_id, status, points_collected, academic_year) VALUES (?, ?, ?, 1, ?)')
-          .run(submission.student_id, submission.event_id, submission.claim_type === 'won' ? 'won' : 'participated', student.year || 'Unknown');
+          .run(submission.student_id, submission.event_id, awardType === 'won' ? 'won' : 'participated', student.year || 'Unknown');
       }
     });
 
     approve();
 
-    res.json({ success: true, pointsAdded: pointsToAdd });
+    res.json({ success: true, pointsAdded: pointsToAdd, awardType });
   } catch (err) {
     console.error('Approve error:', err);
     res.status(500).json({ error: 'Approval failed' });
@@ -318,6 +320,173 @@ app.patch('/api/submissions/:id/reject', authenticate, adminOnly, (req, res) => 
     res.json({ success: true });
   } catch (err) {
     console.error('Reject error:', err);
+    res.status(500).json({ error: 'Rejection failed' });
+  }
+});
+
+// ─────────────────────────────────────────────
+// VALUE ADDED COURSES ROUTES
+// ─────────────────────────────────────────────
+
+// Get courses — students see their own, admins see all (optionally filtered by studentId)
+app.get('/api/courses', authenticate, (req, res) => {
+  try {
+    if (req.user.role === 'admin') {
+      const studentId = req.query.studentId;
+      let courses;
+      if (studentId) {
+        courses = db.prepare(`
+          SELECT vac.*, u.name as student_name
+          FROM value_added_courses vac
+          JOIN users u ON vac.student_id = u.id
+          WHERE vac.student_id = ?
+          ORDER BY vac.year, vac.completed_at DESC
+        `).all(studentId);
+      } else {
+        courses = db.prepare(`
+          SELECT vac.*, u.name as student_name
+          FROM value_added_courses vac
+          JOIN users u ON vac.student_id = u.id
+          ORDER BY u.name, vac.year, vac.completed_at DESC
+        `).all();
+      }
+      res.json(courses);
+    } else {
+      // Student: only their own courses
+      const courses = db.prepare(`
+        SELECT * FROM value_added_courses
+        WHERE student_id = ?
+        ORDER BY year, completed_at DESC
+      `).all(req.user.id);
+      res.json(courses);
+    }
+  } catch (err) {
+    console.error('Get courses error:', err);
+    res.status(500).json({ error: 'Failed to fetch courses' });
+  }
+});
+
+// Add a course (student adds their own)
+app.post('/api/courses', authenticate, (req, res) => {
+  try {
+    const { courseName, provider, year } = req.body;
+
+    if (!courseName || !year) {
+      return res.status(400).json({ error: 'Course name and year are required' });
+    }
+
+    const studentId = req.user.role === 'admin' ? (req.body.studentId || req.user.id) : req.user.id;
+    const id = `vac-${Date.now()}`;
+
+    db.prepare(`
+      INSERT INTO value_added_courses (id, student_id, course_name, provider, year)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, studentId, courseName, provider || '', year);
+
+    const course = db.prepare('SELECT * FROM value_added_courses WHERE id = ?').get(id);
+    res.json(course);
+  } catch (err) {
+    console.error('Add course error:', err);
+    res.status(500).json({ error: 'Failed to add course' });
+  }
+});
+
+// Delete a course (student deletes their own, admin can delete any)
+app.delete('/api/courses/:id', authenticate, (req, res) => {
+  try {
+    const course = db.prepare('SELECT * FROM value_added_courses WHERE id = ?').get(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+
+    if (req.user.role !== 'admin' && course.student_id !== req.user.id) {
+      return res.status(403).json({ error: 'Not authorized to delete this course' });
+    }
+
+    db.prepare('DELETE FROM value_added_courses WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete course error:', err);
+    res.status(500).json({ error: 'Failed to delete course' });
+  }
+});
+
+// ─────────────────────────────────────────────
+// REFUND ROUTES
+// ─────────────────────────────────────────────
+const refundUpload = upload.fields([{ name: 'feeReceipt', maxCount: 1 }, { name: 'certificate', maxCount: 1 }]);
+
+app.post('/api/refunds', authenticate, (req, res) => {
+  refundUpload(req, res, function (err) {
+    if (err) {
+      console.error('Multer error:', err);
+      return res.status(400).json({ error: err.message || 'File upload error' });
+    }
+    
+    try {
+      const { courseName, provider } = req.body;
+      const studentId = req.user.id;
+      const files = req.files;
+
+      if (!files || !files.feeReceipt || !files.certificate) {
+        return res.status(400).json({ error: 'Fee receipt and certificate files are required' });
+      }
+      
+      if (!courseName) {
+        return res.status(400).json({ error: 'Course name is required' });
+      }
+
+      const student = db.prepare('SELECT name FROM users WHERE id = ?').get(studentId);
+
+      const id = `ref-${Date.now()}`;
+      const feeReceiptFile = files.feeReceipt[0];
+      const certificateFile = files.certificate[0];
+
+      db.prepare(`
+        INSERT INTO refund_applications (id, student_id, student_name, course_name, provider, fee_receipt, fee_receipt_original, certificate, certificate_original, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+      `).run(id, studentId, student.name, courseName, provider || '', feeReceiptFile.filename, feeReceiptFile.originalname, certificateFile.filename, certificateFile.originalname);
+
+      const application = db.prepare('SELECT * FROM refund_applications WHERE id = ?').get(id);
+      res.json(application);
+    } catch (dbErr) {
+      console.error('Submit refund error:', dbErr);
+      res.status(500).json({ error: 'Refund submission failed' });
+    }
+  });
+});
+
+app.get('/api/refunds', authenticate, (req, res) => {
+  try {
+    if (req.user.role === 'admin') {
+      const applications = db.prepare('SELECT * FROM refund_applications ORDER BY applied_at DESC').all();
+      res.json(applications);
+    } else {
+      const applications = db.prepare('SELECT * FROM refund_applications WHERE student_id = ? ORDER BY applied_at DESC').all(req.user.id);
+      res.json(applications);
+    }
+  } catch (err) {
+    console.error('Get refunds error:', err);
+    res.status(500).json({ error: 'Failed to fetch refunds' });
+  }
+});
+
+app.patch('/api/refunds/:id/approve', authenticate, adminOnly, (req, res) => {
+  try {
+    const { adminRemark } = req.body;
+    db.prepare('UPDATE refund_applications SET status = ?, admin_remark = ? WHERE id = ?').run('approved', adminRemark || '', req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Approve refund error:', err);
+    res.status(500).json({ error: 'Approval failed' });
+  }
+});
+
+app.patch('/api/refunds/:id/reject', authenticate, adminOnly, (req, res) => {
+  try {
+    const { adminRemark } = req.body;
+    db.prepare('UPDATE refund_applications SET status = ?, admin_remark = ? WHERE id = ?').run('rejected', adminRemark || '', req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Reject refund error:', err);
     res.status(500).json({ error: 'Rejection failed' });
   }
 });

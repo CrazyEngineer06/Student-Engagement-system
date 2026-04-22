@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Student, Event, Submission } from '@/app/types';
+import { Student, Event, Submission, ValueAddedCourse, RefundApplication } from '@/app/types';
 import { api } from '@/app/api';
-import { Trophy, FileText, Plus, LogOut, X, CheckCircle, XCircle, Eye, Loader2, Download, Image } from 'lucide-react';
+import { Trophy, FileText, Plus, LogOut, X, CheckCircle, XCircle, Eye, Loader2, Download, Image, Award, BookOpen, Wallet, MessageSquare } from 'lucide-react';
 import { StudentProfileModal } from './StudentProfileModal';
 interface AdminDashboardProps {
   onLogout: () => void;
@@ -45,7 +45,7 @@ function mapSubmission(raw: any): Submission {
 }
 
 export function AdminDashboard({ onLogout }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'leaderboard' | 'submissions'>('leaderboard');
+  const [activeTab, setActiveTab] = useState<'leaderboard' | 'submissions' | 'courses' | 'refunds'>('leaderboard');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [viewProofModal, setViewProofModal] = useState<Submission | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<Student | null>(null);
@@ -53,7 +53,14 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   
   const [students, setStudents] = useState<Student[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [courses, setCourses] = useState<ValueAddedCourse[]>([]);
+  const [refunds, setRefunds] = useState<RefundApplication[]>([]);
   const [loading, setLoading] = useState(true);
+  const [awardTypes, setAwardTypes] = useState<Record<string, 'participated' | 'won'>>({});
+  const [courseYearFilter, setCourseYearFilter] = useState<string>('All');
+  const [courseStudentFilter, setCourseStudentFilter] = useState<string>('All');
+  const [viewRefundModal, setViewRefundModal] = useState<RefundApplication | null>(null);
+  const [refundRemark, setRefundRemark] = useState('');
 
   const [newEvent, setNewEvent] = useState({
     name: '',
@@ -63,14 +70,47 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     category: 'hackathon' as Event['category'],
   });
 
+  function mapCourse(raw: any): ValueAddedCourse {
+    return {
+      id: raw.id,
+      studentId: raw.student_id ?? raw.studentId,
+      studentName: raw.student_name ?? raw.studentName,
+      courseName: raw.course_name ?? raw.courseName,
+      provider: raw.provider ?? '',
+      year: raw.year,
+      completedAt: raw.completed_at ?? raw.completedAt ?? '',
+    };
+  }
+
+  function mapRefund(raw: any): RefundApplication {
+    return {
+      id: raw.id,
+      studentId: raw.student_id ?? raw.studentId,
+      studentName: raw.student_name ?? raw.studentName,
+      courseName: raw.course_name ?? raw.courseName,
+      provider: raw.provider ?? '',
+      feeReceipt: raw.fee_receipt ?? raw.feeReceipt,
+      feeReceiptOriginal: raw.fee_receipt_original ?? raw.feeReceiptOriginal,
+      certificate: raw.certificate,
+      certificateOriginal: raw.certificate_original ?? raw.certificateOriginal,
+      status: raw.status,
+      adminRemark: raw.admin_remark ?? raw.adminRemark ?? '',
+      appliedAt: raw.applied_at ?? raw.appliedAt,
+    };
+  }
+
   const fetchData = useCallback(async () => {
     try {
-      const [studentsData, subsData] = await Promise.all([
+      const [studentsData, subsData, coursesData, refundsData] = await Promise.all([
         api.getStudents(),
         api.getSubmissions(),
+        api.getCourses(),
+        api.getRefunds(),
       ]);
       setStudents(studentsData.map(mapStudent));
       setSubmissions(subsData.map(mapSubmission));
+      setCourses(coursesData.map(mapCourse));
+      setRefunds(refundsData.map(mapRefund));
     } catch (err) {
       console.error('Failed to fetch admin data:', err);
     } finally {
@@ -85,6 +125,9 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const sortedStudents = [...students].sort((a, b) => b.totalPoints - a.totalPoints);
   const filteredLeaderboardStudents = sortedStudents.filter(s => selectedYearFilter === 'All' || s.year === selectedYearFilter);
   const pendingSubmissions = submissions.filter(s => s.status === 'pending');
+  const filteredCourses = courses
+    .filter(c => courseYearFilter === 'All' || c.year === courseYearFilter)
+    .filter(c => courseStudentFilter === 'All' || c.studentId === courseStudentFilter);
 
   const handleCreateAnnouncement = async () => {
     if (newEvent.name && newEvent.description) {
@@ -106,7 +149,8 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
   const handleApprove = async (submissionId: string) => {
     try {
-      await api.approveSubmission(submissionId);
+      const awardType = awardTypes[submissionId] || 'participated';
+      await api.approveSubmission(submissionId, awardType);
       await fetchData();
     } catch (err) {
       alert('Failed to approve submission');
@@ -119,6 +163,28 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       await fetchData();
     } catch (err) {
       alert('Failed to reject submission');
+    }
+  };
+
+  const handleApproveRefund = async (refundId: string) => {
+    try {
+      await api.approveRefund(refundId, refundRemark);
+      setViewRefundModal(null);
+      setRefundRemark('');
+      await fetchData();
+    } catch (err) {
+      alert('Failed to approve refund');
+    }
+  };
+
+  const handleRejectRefund = async (refundId: string) => {
+    try {
+      await api.rejectRefund(refundId, refundRemark);
+      setViewRefundModal(null);
+      setRefundRemark('');
+      await fetchData();
+    } catch (err) {
+      alert('Failed to reject refund');
     }
   };
 
@@ -203,6 +269,33 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
             {pendingSubmissions.length > 0 && (
               <span className="ml-2 px-2 py-0.5 bg-red-500 text-white rounded-full text-xs">
                 {pendingSubmissions.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('courses')}
+            className={`flex items-center space-x-2 px-6 py-2.5 rounded-md transition ${
+              activeTab === 'courses'
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <BookOpen className="w-5 h-5" />
+            <span>Courses</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('refunds')}
+            className={`flex items-center space-x-2 px-6 py-2.5 rounded-md transition ${
+              activeTab === 'refunds'
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Wallet className="w-5 h-5" />
+            <span>Refunds</span>
+            {refunds.filter(r => r.status === 'pending').length > 0 && (
+              <span className="ml-2 px-2 py-0.5 bg-red-500 text-white rounded-full text-xs">
+                {refunds.filter(r => r.status === 'pending').length}
               </span>
             )}
           </button>
@@ -339,11 +432,25 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                             ? 'bg-green-100 text-green-700'
                             : 'bg-blue-100 text-blue-700'
                         }`}>
-                          {submission.claimType === 'won' ? 'Winner Claim' : 'Participation Claim'}
+                          Student Claims: {submission.claimType === 'won' ? 'Winner' : 'Participation'}
                         </span>
                         <span className="text-sm text-gray-500">
                           Submitted {new Date(submission.submittedAt).toLocaleDateString()}
                         </span>
+                      </div>
+
+                      {/* Admin Award Type Selector */}
+                      <div className="flex items-center space-x-2 mt-3 bg-gray-50 rounded-lg p-3">
+                        <Award className="w-4 h-4 text-indigo-600" />
+                        <span className="text-sm font-medium text-gray-700">Award as:</span>
+                        <select
+                          value={awardTypes[submission.id] || submission.claimType}
+                          onChange={(e) => setAwardTypes(prev => ({ ...prev, [submission.id]: e.target.value as 'participated' | 'won' }))}
+                          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white"
+                        >
+                          <option value="participated">Participation Points</option>
+                          <option value="won">Winning Points</option>
+                        </select>
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">
@@ -367,6 +474,129 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         title="Reject"
                       >
                         <XCircle className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* Value Added Courses Tab */}
+        {activeTab === 'courses' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">Completed Courses (Approved for Refund)</h2>
+              {/* Student Filter */}
+              <select
+                value={courseStudentFilter}
+                onChange={(e) => setCourseStudentFilter(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white shadow-sm"
+              >
+                <option value="All">All Students</option>
+                {sortedStudents.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {refunds.filter(r => r.status === 'approved' && (courseStudentFilter === 'All' || r.studentId === courseStudentFilter)).length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm p-12 text-center">
+                <BookOpen className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500">No approved courses found</p>
+                <p className="text-sm text-gray-400 mt-2">Courses that have been approved for a refund will appear here.</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-6 py-4 text-left text-xs text-gray-500 uppercase tracking-wider">Student</th>
+                        <th className="px-6 py-4 text-left text-xs text-gray-500 uppercase tracking-wider">Course Name</th>
+                        <th className="px-6 py-4 text-left text-xs text-gray-500 uppercase tracking-wider">Provider</th>
+                        <th className="px-6 py-4 text-left text-xs text-gray-500 uppercase tracking-wider">Status</th>
+                        <th className="px-6 py-4 text-left text-xs text-gray-500 uppercase tracking-wider">Approved On</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {refunds.filter(r => r.status === 'approved' && (courseStudentFilter === 'All' || r.studentId === courseStudentFilter)).map((refund) => (
+                        <tr key={refund.id} className="hover:bg-gray-50 transition">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm">
+                                {(refund.studentName || '?').charAt(0)}
+                              </div>
+                              <span className="text-gray-900 font-medium">{refund.studentName || 'Unknown'}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="text-gray-900 font-medium">{refund.courseName}</span>
+                          </td>
+                          <td className="px-6 py-4 text-gray-600">
+                            {refund.provider || '—'}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                              Approved
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-gray-500 text-sm">
+                            {refund.appliedAt ? new Date(refund.appliedAt).toLocaleDateString() : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Refunds Tab */}
+        {activeTab === 'refunds' && (
+          <div className="space-y-4">
+            {refunds.filter(r => r.status === 'pending').length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm p-12 text-center">
+                <Wallet className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500">No pending refund applications</p>
+                <p className="text-sm text-gray-400 mt-2">New refund applications from students will appear here</p>
+              </div>
+            ) : (
+              refunds.filter(r => r.status === 'pending').map((refund) => (
+                <div key={refund.id} className="bg-white rounded-xl shadow-sm p-6">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-3 mb-2">
+                        <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold">
+                          {refund.studentName.charAt(0)}
+                        </div>
+                        <div>
+                          <h3 className="text-lg text-gray-900 font-semibold">{refund.studentName}</h3>
+                          <p className="text-sm text-gray-500">Applied on {new Date(refund.appliedAt).toLocaleDateString()}</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 bg-gray-50 rounded-lg p-3 inline-block">
+                        <p className="text-sm text-gray-700">
+                          <span className="font-semibold">Course:</span> {refund.courseName}
+                        </p>
+                        <p className="text-sm text-gray-700">
+                          <span className="font-semibold">Provider:</span> {refund.provider || '—'}
+                        </p>
+                      </div>
+                    </div>
+                    <div>
+                      <button
+                        onClick={() => {
+                          setViewRefundModal(refund);
+                          setRefundRemark('');
+                        }}
+                        className="flex items-center space-x-2 bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded-lg transition font-medium"
+                      >
+                        <Eye className="w-5 h-5" />
+                        <span>Review Application</span>
                       </button>
                     </div>
                   </div>
@@ -558,6 +788,20 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </a>
             </div>
 
+            {/* Award Type Selector in Modal */}
+            <div className="flex items-center space-x-3 bg-indigo-50 rounded-lg p-4 mb-4">
+              <Award className="w-5 h-5 text-indigo-600" />
+              <span className="text-sm font-semibold text-gray-700">Award as:</span>
+              <select
+                value={awardTypes[viewProofModal.id] || viewProofModal.claimType}
+                onChange={(e) => setAwardTypes(prev => ({ ...prev, [viewProofModal.id]: e.target.value as 'participated' | 'won' }))}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white"
+              >
+                <option value="participated">Participation Points</option>
+                <option value="won">Winning Points</option>
+              </select>
+            </div>
+
             {/* Action Buttons */}
             <div className="flex space-x-3">
               <button
@@ -579,6 +823,151 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               >
                 <XCircle className="w-5 h-5" />
                 <span>Reject</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Refund Modal */}
+      {viewRefundModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-4xl w-full p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl text-gray-900 font-bold">Review Refund Application</h3>
+              <button
+                onClick={() => setViewRefundModal(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg transition"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="bg-gray-50 rounded-lg p-4 mb-6 grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-gray-500">Student</p>
+                <p className="font-medium text-gray-900">{viewRefundModal.studentName}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Course</p>
+                <p className="font-medium text-gray-900">{viewRefundModal.courseName}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Provider</p>
+                <p className="font-medium text-gray-900">{viewRefundModal.provider || '—'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Applied On</p>
+                <p className="font-medium text-gray-900">{new Date(viewRefundModal.appliedAt).toLocaleDateString()}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-6 mb-6">
+              {/* Fee Receipt */}
+              <div>
+                <h4 className="font-medium text-gray-900 mb-2 flex items-center">
+                  <FileText className="w-4 h-4 mr-2" /> Fee Receipt
+                </h4>
+                <div className="rounded-lg overflow-hidden border border-gray-200">
+                  {isImageFile(viewRefundModal.feeReceipt) ? (
+                    <img
+                      src={api.getProofFileUrl(viewRefundModal.feeReceipt)}
+                      alt="Fee Receipt"
+                      className="w-full h-48 object-contain bg-gray-100"
+                    />
+                  ) : isPdfFile(viewRefundModal.feeReceipt) ? (
+                    <iframe
+                      src={api.getProofFileUrl(viewRefundModal.feeReceipt)}
+                      width="100%"
+                      height="192"
+                      className="border-0"
+                      title="Fee Receipt PDF"
+                    />
+                  ) : (
+                    <div className="h-48 bg-gray-100 flex flex-col items-center justify-center text-gray-500">
+                      <FileText className="w-8 h-8 mb-2" />
+                      <span className="text-sm">Preview not available</span>
+                    </div>
+                  )}
+                  <div className="bg-gray-50 p-2 text-center border-t border-gray-200">
+                    <a
+                      href={api.getProofFileUrl(viewRefundModal.feeReceipt)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline text-sm flex items-center justify-center"
+                    >
+                      <Download className="w-3 h-3 mr-1" /> Download Result
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              {/* Certificate */}
+              <div>
+                <h4 className="font-medium text-gray-900 mb-2 flex items-center">
+                  <Award className="w-4 h-4 mr-2" /> Certificate
+                </h4>
+                <div className="rounded-lg overflow-hidden border border-gray-200">
+                  {isImageFile(viewRefundModal.certificate) ? (
+                    <img
+                      src={api.getProofFileUrl(viewRefundModal.certificate)}
+                      alt="Certificate"
+                      className="w-full h-48 object-contain bg-gray-100"
+                    />
+                  ) : isPdfFile(viewRefundModal.certificate) ? (
+                    <iframe
+                      src={api.getProofFileUrl(viewRefundModal.certificate)}
+                      width="100%"
+                      height="192"
+                      className="border-0"
+                      title="Certificate PDF"
+                    />
+                  ) : (
+                    <div className="h-48 bg-gray-100 flex flex-col items-center justify-center text-gray-500">
+                      <FileText className="w-8 h-8 mb-2" />
+                      <span className="text-sm">Preview not available</span>
+                    </div>
+                  )}
+                  <div className="bg-gray-50 p-2 text-center border-t border-gray-200">
+                    <a
+                      href={api.getProofFileUrl(viewRefundModal.certificate)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline text-sm flex items-center justify-center"
+                    >
+                      <Download className="w-3 h-3 mr-1" /> Download Result
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center">
+                <MessageSquare className="w-4 h-4 mr-2" /> Admin Remark (Optional)
+              </label>
+              <textarea
+                value={refundRemark}
+                onChange={(e) => setRefundRemark(e.target.value)}
+                placeholder="E.g., Approved and forwarded to finance..."
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none h-20"
+              />
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                onClick={() => handleApproveRefund(viewRefundModal.id)}
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg transition flex items-center justify-center space-x-2"
+              >
+                <CheckCircle className="w-5 h-5" />
+                <span>Approve Refund</span>
+              </button>
+              <button
+                onClick={() => handleRejectRefund(viewRefundModal.id)}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg transition flex items-center justify-center space-x-2"
+              >
+                <XCircle className="w-5 h-5" />
+                <span>Reject Refund</span>
               </button>
             </div>
           </div>

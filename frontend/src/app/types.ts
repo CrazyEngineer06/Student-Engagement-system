@@ -52,3 +52,28 @@ export interface AuthResponse {
   token: string;
   user: AuthUser;
 }
+
+export interface ValueAddedCourse {
+  id: string;
+  studentId: string;
+  studentName?: string;
+  courseName: string;
+  provider: string;
+  year: string;
+  completedAt: string;
+}
+
+export interface RefundApplication {
+  id: string;
+  studentId: string;
+  studentName: string;
+  courseName: string;
+  provider: string;
+  feeReceipt: string;
+  feeReceiptOriginal: string;
+  certificate: string;
+  certificateOriginal: string;
+  status: 'pending' | 'approved' | 'rejected';
+  adminRemark: string;
+  appliedAt: string;
+}
